@@ -1,0 +1,1648 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as anime
+import pandas as pd
+from mpl_toolkits.mplot3d import Axes3D
+from scipy.sparse import csr_matrix, csc_matrix, coo_matrix, lil_matrix
+from scipy.sparse.linalg import inv, eigs
+from scipy.linalg import inv, eig
+import time
+import cmath
+
+t1= time.time()#開始時刻計測
+print(t1)
+m=1 #9.109*10**(-31)
+h_bar=1 #1.054*10**(-34)
+n=40 #1辺の幅
+times=20000 #回す回数
+dy=0.004
+dx=0.004
+dt=0.05
+haba=0.0035
+
+def differential(func_list):                    #一階微分
+
+    func_listx=np.zeros((n,n),dtype=np.complex)
+    func_listy=np.zeros((n,n),dtype=np.complex)
+
+    for i in range(n):
+        for j in range(n):
+            func_listx[i,j]=(func_list[i,j]-func_list[(i+1)%n,j])/dx
+            func_listy[i,j]=(func_list[i,j]-func_list[i,(j+1)%n])/dy
+
+    return func_listx+func_listy
+
+def double_differential(func_list):             #二階微分
+
+    func_listx=np.zeros((n,n),dtype=np.complex)
+    func_listy=np.zeros((n,n),dtype=np.complex)
+    
+    for i in range(n):
+        for j in range(n):
+            func_listx[i,j]=(func_list[(i-1)%n,j]-2*func_list[i,j]+func_list[(i+1)%n,j])/dx**2
+            func_listy[i,j]=(func_list[i,(j-1)%n]-2*func_list[i,j]+func_list[i,(j+1)%n])/dy**2 
+
+    return func_listx+func_listy            
+
+def euler(func,func_listx,func_listy):          #euler法
+
+    euler_list=np.zeros((n,n),dtype=np.complex)
+
+    for i in range(n):
+        for j in range(n):
+            euler_list[i,j]=func(func_listx*dt,func_listy*dt)
+
+    return euler_list
+
+def rungekutta(func,psi_list,V_list):           #rungekutta(func(psi_list(t),V_list))#return:next psi_list
+
+    k1=np.zeros((n,n),dtype=np.complex)
+    k2=np.zeros((n,n),dtype=np.complex)
+    k3=np.zeros((n,n),dtype=np.complex)
+    k4=np.zeros((n,n),dtype=np.complex)
+    k=np.zeros((n,n),dtype=np.complex)
+
+    k1=func(psi_list,V_list)
+    k2=func((psi_list+0.5*dt*k1),V_list)
+    k3=func((psi_list+0.5*dt*k2),V_list)
+    k4=func((psi_list+dt*k3),V_list)
+    k=(k1+2*k2+2*k3+k4)/6
+    psi_list=psi_list+k*dt
+    
+    return psi_list
+
+def Hamilton(psi_list,V_list):                  #2DFreeElectronHamilton
+      
+    d2psi_list=np.zeros((n,n),dtype=np.complex) 
+    Hamilton_list=np.zeros((n,n),dtype=np.complex) 
+
+    d2psi_list=double_differential(psi_list)
+
+    for i in range(n):
+        for j in range(n):
+            Hamilton_list[i,j]=((-h_bar**2)/(2*m))*d2psi_list[i,j]+V_list[i,j]*psi_list[i,j]
+
+    return (-1j/h_bar)*Hamilton_list
+
+def graphen_Hamilton(psi_list,V_list):        #tit_vinding_graphen_Hamilton#t=times count#要改善
+
+    psi_list_even=np.zeros((n,n),dtype=np.complex)
+    psi_list_odd=np.zeros((n,n),dtype=np.complex)
+    
+    T=1j #graphen_Hamilton_T
+
+    for i in range(n):
+        for j in range(n):
+
+            if (i+j)%2 == 0 :
+                psi_list_even[i][j]=psi_list[i][(j+1)%n]+psi_list[i][(j-1)%n]+psi_list[(i-1)%n][j]
+
+            if (i+j)%2 == 1 :
+                psi_list_odd[i][j]=psi_list[i][(j+1)%n]+psi_list[i][(j-1)%n]+psi_list[(i+1)%n][j]
+
+    psi_list=T*(psi_list_even+psi_list_odd)
+
+    return psi_list
+
+def norm(func_list):                            #nrom return total func_list sell 
+    total=0
+    norm_x , norm_y = func_list.shape
+    for i in range(norm_x):
+        for j in range(norm_y):
+            total +=func_list[i][j]
+    
+    return total
+
+def graphen_Hamilton_matrix():                  #make graphen_Hamilton_matrix
+    
+    graphen_matrix=np.zeros((n**2,n**2),dtype=float)
+
+    for N in range(int((n)**2)):
+
+        graphen_list = np.zeros((n)**2,dtype=int)
+
+        i=int(N%n)
+        j=int(N/n)
+        
+        graphen_list[n*((j+1)%n)+i]=1
+        graphen_list[n*((j-1)%n)+i]=1
+
+        if (i+j)%2 == 0 :
+            graphen_list[n*((j)%n)+(i-1)%n]=1
+        if (i+j)%2 == 1 :
+            graphen_list[n*((j)%n)+(i+1)%n]=1
+
+        graphen_matrix[N] = graphen_list
+
+    return graphen_matrix
+
+def parallel_graphen():
+
+    parallel_matrix1=np.zeros((n**2,n**2),dtype=float)
+    parallel_matrix2=np.zeros((n**2,n**2),dtype=float)
+
+    for N in range(int((n)**2)):
+    
+        parallel_list1 = np.zeros((n)**2,dtype=int)
+        parallel_list2 = np.zeros((n)**2,dtype=int)
+    
+        parallel_list1[(N+n+1)%n**2]=1
+        parallel_list2[(N-n)%n**2]=1
+        
+        parallel_matrix1[N]= parallel_list1
+        parallel_matrix2[N]= parallel_list2
+
+    return parallel_matrix1,parallel_matrix2
+
+def graphen_Hamilton_matrix(a0):                  #make graphen_Hamilton_matrix
+    
+    graphen_matrix=np.zeros((n**2,n**2),dtype=float)
+
+    for N in range(int(n**2)):
+
+        graphen_list = np.zeros(n**2,dtype=int)
+
+        i=int(N%n)
+        j=int(N/n)
+        
+        graphen_list[n*((j+1)%n)+i]=a0
+        graphen_list[n*((j-1)%n)+i]=a0
+
+        if (i+j)%2 == 0 :
+            graphen_list[n*j+(i-1)%n]=a0
+        if (i+j)%2 == 1 :
+            graphen_list[n*j+(i+1)%n]=a0
+
+        graphen_matrix[N] = graphen_list
+
+    return graphen_matrix
+
+def graphen_Hamilton_matrix_AA(a0,a1,a3):              #make graphen_Hamilton_matrix_two_layer
+    
+    # a0=2.569,
+    # a1=0.361,
+    # a2=0.032
+
+    graphen_matrix=np.zeros((2*(n**2),2*(n**2)),dtype=float)
+
+    for N in range(int((n**2))):#1st layer
+
+        graphen_list = np.zeros(2*(n**2),dtype=float)
+
+        i=int(N%n)
+        j=int(N/n)
+
+        if N%2 == 0 :
+            graphen_list[n*((j+1)%n)+i]=a0
+            graphen_list[n*((j-1)%n)+i]=a0
+            graphen_list[n*((j))+(i+1)%n]=a0
+
+            graphen_list[n*((j))+(i+1)%n+n**2]=a3
+
+            graphen_list[(n**2+n*j+i)]=a1
+
+            graphen_matrix[N] = graphen_list
+
+            continue
+
+        elif N%2 == 1 :
+            graphen_list[n*((j+1)%n)+i]=a0
+            graphen_list[n*((j-1)%n)+i]=a0
+            graphen_list[n*((j)%n)+(i-1)%n]=a0
+
+            graphen_list[n*((j)%n)+((i-1)%n)+n**2]=a3
+
+            graphen_list[(n**2+n*j+i)]=a1
+
+            graphen_matrix[N] = graphen_list
+
+            continue
+        
+    for N in range(int(n**2),int(2*(n**2))):#2nd layer
+        
+        graphen_list = np.zeros(2*(n**2),dtype=float)
+
+        i=int((N-n**2)%n)
+        j=int((N-n**2)/n)
+        
+        if N%2 == 0 :
+            graphen_list[n*((j+1)%n)+i+n**2]=a0
+            graphen_list[n*((j-1)%n)+i+n**2]=a0
+            graphen_list[n*((j))+((i+1)%n)+n**2]=a0
+
+            graphen_list[n*((j))+(i+1)%n]=a3
+            
+            graphen_list[(n*j+i)]=a1
+
+            graphen_matrix[N] = graphen_list
+
+            continue        
+        elif N%2 == 1 :
+            graphen_list[n*((j+1)%n)+i+n**2]=a0
+            graphen_list[n*((j-1)%n)+i+n**2]=a0
+            graphen_list[n*((j)%n)+((i-1)%n)+n**2]=a0
+
+            graphen_list[n*((j))+(i-1)%n]=a3
+
+            graphen_list[(n*j+i)]=a1
+
+            graphen_matrix[N] = graphen_list
+
+            continue
+
+    return graphen_matrix
+
+def graphen_Hamilton_matrix_AB(a0,a1,a2,a3): 
+
+    graphen_matrix=np.zeros((2*(n**2),2*(n**2)),dtype=float)
+
+    #a0=3.16 水平方向
+    #a1=0.381　真上下
+    #a2=0.14  斜め上下その２
+    #a3=0.38 斜め上下その１
+
+    for N in range(int((n**2))):#1st layer
+
+        graphen_list = np.zeros(2*(n**2),dtype=float)
+
+        i=int((N%n))
+        j=int((N/n))
+         
+        graphen_list[n*((j+1)%n)+i]=a0
+        graphen_list[n*((j-1)%n)+i]=a0
+
+        if (N+j)%2 == 0 :
+            graphen_list[n*j+(i+1)%n]=a0
+            
+            graphen_list[n**2+n*j+i]=a1
+
+            graphen_list[n**2+n*((j+1)%n)+i]=a2
+            graphen_list[n**2+n*((j-1)%n)+i]=a2
+            graphen_list[n**2+n*j+(i-1)%n]=a2
+    
+            graphen_matrix[N] = graphen_list
+            
+            continue
+        elif (N+j)%2 == 1 :
+            graphen_list[n*((j)%n)+(i-1)%n]=a0
+
+            graphen_list[n**2+n*((j+1)%n)+i] = a3
+            graphen_list[n**2+n*((j-1)%n)+i] = a3
+            graphen_list[n**2+n*j+(i-1)%n] = a3
+
+            graphen_list[n**2+n*((j-1)%n)+(i-1)%n] = a2
+            graphen_list[n**2+n*((j+1)%n)+(i-1)%n] = a2
+            graphen_list[n**2+n*((j-1)%n)+i] = a2
+            graphen_list[n**2+n*j+i] = a2
+
+            graphen_list[n**2+n*((j-1)%n)+i] = a3 
+
+
+            graphen_matrix[N] = graphen_list
+
+            continue
+
+    for N in range(int(n**2),int(2*(n**2))):#2nd layer
+        
+        graphen_list = np.zeros(2*(n**2),dtype=float)
+
+        i=int((N-n**2)%n)
+        j=int(((N-n**2)/n))
+
+    
+        graphen_list[n*((j+1)%n)+i+n**2]=a0
+        graphen_list[n*((j-1)%n)+i+n**2]=a0
+        
+        if (N+j)%2 == 0 :
+            graphen_list[n*((j)%n)+(i-1)%n+n**2]=a0
+            
+            graphen_list[n*j+i]=a1
+
+            graphen_list[n*((j-1)%n)+i]=a3
+            graphen_list[n*((j+1)%n)+i]=a3
+            graphen_list[n*j+((i+1)%n)]=a3
+
+            graphen_matrix[N] = graphen_list
+            
+            continue
+        elif (N+j)%2 == 1 :
+            graphen_list[n*((j)%n)+((i+1)%n)+n**2]=a0
+
+            graphen_list[n*((j-1)%n)+(i+1)%n]=a2
+            graphen_list[n*((j+1)%n)+(i+1)%n]=a2
+            graphen_list[n*j+i]=a2
+
+            graphen_list[n*((j-1)%n)+i] = a2
+            graphen_list[n*j+((i+1)%n)] = a2
+            graphen_list[n*((j+1)%n)+i] = a2
+
+            graphen_matrix[N]=graphen_list
+
+            continue
+
+    return graphen_matrix
+
+def graphen_Hamilton_matrix_gap_AB(a0,a1,a2,a3,beta): 
+
+    graphen_matrix=np.zeros((2*(n**2),2*(n**2)),dtype=float)
+
+    #a0=3.16 水平方向
+    #a1=0.381　真上下
+    #a2=0.14  斜め上下その２
+    #a3=0.38 斜め上下その１
+
+    for N in range(int((n**2))):#1st layer
+
+        graphen_list = np.zeros(2*(n**2),dtype=float)
+
+        i=int((N%n))
+        j=int((N/n))
+         
+        graphen_list[n*((j+1)%n)+i]=a0
+        graphen_list[n*((j-1)%n)+i]=a0
+
+        if (N+j)%2 == 0 :
+            graphen_list[n*j+(i+1)%n]=a0
+            
+            graphen_list[n**2+n*j+i]=a1
+
+            graphen_list[n**2+n*((j+1)%n)+i]=a2
+            graphen_list[n**2+n*((j-1)%n)+i]=a2
+            graphen_list[n**2+n*j+(i-1)%n]=a2
+    
+            graphen_matrix[N] = graphen_list
+            
+            continue
+        elif (N+j)%2 == 1 :
+            graphen_list[n*((j)%n)+(i-1)%n]=a0
+
+            graphen_list[n**2+n*((j+1)%n)+i] = a3
+            graphen_list[n**2+n*((j-1)%n)+i] = a3
+            graphen_list[n**2+n*j+(i-1)%n] = a3
+
+            graphen_list[n**2+n*((j-1)%n)+(i-1)%n] = a2
+            graphen_list[n**2+n*((j+1)%n)+(i-1)%n] = a2
+            graphen_list[n**2+n*((j-1)%n)+i] = a2
+            graphen_list[n**2+n*j+i] = a2
+
+            graphen_list[n**2+n*((j-1)%n)+i] = a3
+
+
+            graphen_matrix[N] = graphen_list
+
+            continue
+
+    for N in range(int(n**2),int(2*(n**2))):#2nd layer
+        
+        graphen_list = np.zeros(2*(n**2),dtype=float)
+
+        i=int((N-n**2)%n)
+        j=int(((N-n**2)/n))
+
+    
+        graphen_list[n*((j+1)%n)+i+n**2]=a0
+        graphen_list[n*((j-1)%n)+i+n**2]=a0
+        
+        if (N+j)%2 == 0 :
+            graphen_list[n*((j)%n)+(i-1)%n+n**2]=a0
+            
+            graphen_list[n*j+i]=a1
+
+            graphen_list[n*((j-1)%n)+i]=a3
+            graphen_list[n*((j+1)%n)+i]=a3
+            graphen_list[n*j+((i+1)%n)]=a3
+
+            graphen_matrix[N] = graphen_list
+            
+            continue
+        elif (N+j)%2 == 1 :
+            graphen_list[n*((j)%n)+((i+1)%n)+n**2]=a0
+
+            graphen_list[n*((j-1)%n)+(i+1)%n]=a2
+            graphen_list[n*((j+1)%n)+(i+1)%n]=a2
+            graphen_list[n*j+i]=a2-beta
+
+            graphen_list[n*((j-1)%n)+i] = a2
+            graphen_list[n*j+((i+1)%n)] = a2
+            graphen_list[n*((j+1)%n)+i] = a2
+
+            graphen_matrix[N]=graphen_list
+
+            continue
+
+    return graphen_matrix
+
+def parallel_graphen():
+
+    parallel_matrix1=np.zeros((n**2,n**2),dtype=float)
+    parallel_matrix2=np.zeros((n**2,n**2),dtype=float)
+
+    for N in range(int((n)**2)):
+    
+        parallel_list1 = np.zeros((n)**2,dtype=int)
+        parallel_list2 = np.zeros((n)**2,dtype=int)
+    
+        parallel_list1[(N+n+1)%n**2]=1
+        parallel_list2[(N-n)%n**2]=1
+        
+        parallel_matrix1[N]= parallel_list1
+        parallel_matrix2[N]= parallel_list2
+
+    return parallel_matrix1,parallel_matrix2
+
+def parallel_graphen_AA():                         #return graphen's 2 prallel vectols
+
+    parallel_matrix1=np.zeros((2*(n**2),2*(n**2)),dtype=float)
+    parallel_matrix2=np.zeros((2*(n**2),2*(n**2)),dtype=float)
+
+    for N in range(int((n)**2)):
+    
+        parallel_list1 = np.zeros(2*(n**2),dtype=int)
+        parallel_list2 = np.zeros(2*(n**2),dtype=int)
+
+        x1=(N%n+1)%n
+        x2=(N%n+1)%n
+
+        #print(x1)
+
+        y1=(int(N/n)+1)%n
+        y2=(int(N/n)-1)%n
+
+        #print("y1",y1)
+        #print("y2",y2)
+        
+        parallel_list1[int(y1*n+x1)]=1
+        parallel_list2[int(y2*n+x2)]=1
+        
+        parallel_matrix1[N]= parallel_list1
+        parallel_matrix2[N]= parallel_list2
+        
+    for N in range(int(n**2),int(2*(n**2))):
+
+        parallel_list1 = np.zeros(2*(n**2),dtype=int)
+        parallel_list2 = np.zeros(2*(n**2),dtype=int)
+
+        x1=(N%n+1)%n
+        x2=(N%n+1)%n
+
+        y1=(int(N/n)+1)%n
+        y2=(int(N/n)-1)%n
+
+        parallel_list1[int(y1*n+x1+n**2)]=1
+        parallel_list2[int(y2*n+x2+n**2)]=1
+        
+        parallel_matrix1[N]= parallel_list1
+        parallel_matrix2[N]= parallel_list2
+
+    return parallel_matrix1,parallel_matrix2
+
+def parallel_graphen_AB():                         #return graphen's 2 prallel vectols
+
+    parallel_matrix1=np.zeros((2*(n**2),2*(n**2)),dtype=float)
+    parallel_matrix2=np.zeros((2*(n**2),2*(n**2)),dtype=float)
+
+    for N in range(int((n)**2)):
+    
+        parallel_list1 = np.zeros(2*(n**2),dtype=int)
+        parallel_list2 = np.zeros(2*(n**2),dtype=int)
+
+        x1=(N%n+1)%n
+        x2=(N%n+1)%n
+
+        #print(x1)
+
+        y1=(int(N/n)+1)%n
+        y2=(int(N/n)-1)%n
+
+        #print("y1",y1)
+        #print("y2",y2)
+        
+        parallel_list1[int(y1*n+x1)]=1
+        parallel_list2[int(y2*n+x2)]=1
+        
+        parallel_matrix1[N]= parallel_list1
+        parallel_matrix2[N]= parallel_list2
+        print(parallel_list1)
+
+    for N in range(int(n**2),int(2*(n**2))):
+
+        parallel_list1 = np.zeros(2*(n**2),dtype=int)
+        parallel_list2 = np.zeros(2*(n**2),dtype=int)
+
+        x1=(N%n+1)%n
+        x2=(N%n+1)%n
+
+        y1=(int(N/n)+1)%n
+        y2=(int(N/n)-1)%n
+
+        parallel_list1[int(y1*n+x1+n**2)]=1
+        parallel_list2[int(y2*n+x2+n**2)]=1
+
+        parallel_matrix1[N]= parallel_list1
+        parallel_matrix2[N]= parallel_list2
+
+    return parallel_matrix1,parallel_matrix2
+
+def band_gap(list):
+    positive_num = 100
+    negative_num = -100
+    for i in range(len(list)):
+        if list[i] > 0 :
+            if positive_num > list[i] :
+                positive_num = list[i]
+                continue
+            else :
+                continue
+        elif list[i] < 0:
+            if negative_num < list[i] :
+                negative_num = list[i]
+                continue
+            else :
+                continue
+    
+    return np.absolute(np.absolute(positive_num)-np.absolute(negative_num))
+
+def Hermitian_checker(array):
+
+    times = len(array)
+    
+    for i in range(times):
+        for j in range(times):
+            if array[i,j] == array[j,i]:
+                continue
+            else:
+                print("errer",i,j,array[i,j]-array[j,i])
+                continue
+
+def hopp_checker(array):
+    times = len(array)
+    
+    for i in range(times):
+        for j in range(times):
+            if array[i,j] == 0 :
+                if array[j,i] == 0 :
+                    continue
+                else :
+                    print("ijがゼロ",i,j,array[j,i],array[i,j]-array[j,i])
+                    continue
+            elif array[i,j] == array[j,i] :
+                print("True hopp",i,j,array[i,j])
+            else:
+                print("jiがゼロ",i,j,array[i,j])
+                continue
+
+def list_change(list_origin):
+
+    re_list = []
+
+    for num in range(len(list_origin)):
+
+        if np.absolute(list_origin[num]) <= 1 :
+        
+            re_list.append(list_origin[num])
+
+            continue
+        else :
+            continue
+    
+    return re_list
+
+def graphen_Hamilton_matrix_tube(side,wide,leng):#wide:even
+
+    graphen_matrix = graphen_matrix_for_tube(wide,leng)
+    graphen_list = graphen_list_for_tube(wide,leng)
+
+    for j in range(wide):
+
+        for i in range(leng):
+            
+            graphen_list = graphen_list_for_tube(wide,leng)
+
+            if i == 0:
+                if (j+i)%2 == 0:
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[(j-1)%wide*leng+i] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+
+                elif (j+i)%2 == 1:
+                    graphen_list[(j+1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i+1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+            elif i == leng-1:
+                if (j+i)%2 == 0:
+                    graphen_list[j*leng+(i-1)] = side
+                    graphen_list[(j-1)%wide*leng+i] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+                elif (j+i)%2 ==1:
+                    graphen_list[(j+1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i-1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+            else :
+                if (j+i)%2 == 0 :
+                    graphen_list[(j-1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[j*leng+(i-1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+                elif (j+i)%2 == 1 :
+                    graphen_list[(j+1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[j*leng+(i-1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+    
+    return graphen_matrix
+
+def graphen_Hamilton_matrix_ribon(side,wide,leng):
+
+    graphen_matrix = graphen_matrix_for_tube(wide,leng)
+    graphen_list = graphen_list_for_tube(wide,leng)
+
+    for j in range(wide):
+
+        for i in range(leng):
+            
+            graphen_list = graphen_list_for_tube(wide,leng)
+
+            if j == 0:
+                if (i+j)%2 == 0:
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[j*leng+(i-1)] = side
+                elif (i+j)%2 == 1:
+                    graphen_list[(j-1)*leng+i] = side
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[j*leng+(i-1)] = side
+            elif i == 0:
+                if (j+i)%2 == 0:
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[(j-1)%wide*leng+i] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+
+                elif (j+i)%2 == 1:
+                    graphen_list[(j+1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i+1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+            elif i == leng-1:
+                if (j+i)%2 == 0:
+                    graphen_list[j*leng+(i-1)] = side
+                    graphen_list[(j-1)%wide*leng+i] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+                elif (j+i)%2 ==1:
+                    graphen_list[(j+1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i-1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+            else :
+                if (j+i)%2 == 0 :
+                    graphen_list[(j-1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[j*leng+(i-1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+                elif (j+i)%2 == 1 :
+                    graphen_list[(j+1)%wide*leng+i] = side
+                    graphen_list[j*leng+(i+1)] = side
+                    graphen_list[j*leng+(i-1)] = side
+
+                    graphen_matrix[j*leng+i] = graphen_list
+                    continue
+    
+    return graphen_matrix
+
+def graphen_Hamilton_matrix_tube_cairal(side,wide,leng):#wide:odd
+
+    graphen_matrix = graphen_matrix_for_tube(wide,leng)
+    graphen_list = graphen_list_for_tube(wide,leng)
+
+    for i in range(wide):
+        
+        graphen_list = graphen_list_for_tube(wide,leng)
+
+        if i == 0 :
+            graphen_list[i+1] = side
+            graphen_list[wide] = side
+
+            graphen_matrix[i] = graphen_list 
+
+            continue
+        elif i == wide -1 :
+
+            if i%2 ==0:
+                graphen_list[i+1] = side
+                graphen_list[i-1] = side
+                graphen_list[wide+i] = side
+
+                graphen_matrix[i] = graphen_list
+
+                continue
+            elif i%2 ==1:
+                graphen_list[i+1] = side
+                graphen_list[i-1] = side
+
+                graphen_matrix[i] = graphen_list
+                
+                continue
+        else :
+            graphen_list[i+1] = side 
+            graphen_list[i-1] = side
+            if i%2 ==0 :
+                graphen_list[wide+i] = side
+
+            graphen_matrix[i] = graphen_list
+
+            continue
+
+    for j in range(1,leng):
+        for i in range(wide):
+
+
+            
+            graphen_list = np.zeros(leng**2,dtype=float)
+
+            if j == leng-1 :
+                if i == wide-1 :
+                    if (j*wide+i)%2 == 0:
+                        graphen_list[j*wide+i-1] = side
+
+                        graphen_matrix[j*wide+i] = graphen_list
+
+                        continue
+                    elif (j*wide+i)%2 == 1:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[(j-1)*wide+i] = side
+
+                        graphen_matrix[j*wide+i] =graphen_list
+                        
+                        continue
+                elif (i+j*wide)%2 == 0:
+                    graphen_list[j*wide+i-1] = side
+                    graphen_list[j*wide+i+1] = side
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+                elif (i+j*wide)%2 == 1:
+                    graphen_list[j*wide+i-1] = side
+                    graphen_list[j*wide+i+1] = side
+                    graphen_list[(j-1)*wide+i] = side
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+            else :
+
+                graphen_list[j*wide+i+1] = side
+                graphen_list[j*wide+i-1] = side
+
+                if (i+j*wide)%2 == 0:
+                    graphen_list[(j+1)*wide+i] = side
+
+                    graphen_matrix[j*wide+i] = graphen_list
+
+                    continue
+                if (i+j*wide)%2 == 1:
+                    graphen_list[(j-1)*wide+i] = side
+                    
+                    graphen_matrix[j*wide+i] = graphen_list
+                    
+                    continue
+    
+    return graphen_matrix
+
+def graphen_Hamilton_matrix_tube_bend(side,wide,leng,bend):#bend < leng 
+
+    graphen_matrix = graphen_matrix_for_tube(wide,leng)
+    graphen_list = graphen_list_for_tube(wide,leng)
+
+    if leng%2 == 0:
+        
+        left = 20
+        right = 40
+        up = 3
+        down = 2
+
+        print("left",left)
+        print("right",right)
+        print("up",up)
+        print("down",down)
+
+    
+
+        for j in range(wide):
+
+            for i in range(leng):
+                
+                graphen_list = graphen_list_for_tube(wide,leng)
+
+                if i == 0: #0行目
+                    if (j+i)%2 == 0:
+                        graphen_list[j*leng+(i+1)] = side
+                        graphen_list[(j-1)%wide*leng+i] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+
+                    elif (j+i)%2 == 1:
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue                
+                elif i == leng-1:#右端
+                    if (j+i)%2 == 0:
+                        graphen_list[j*leng+(i-1)] = side
+                        graphen_list[(j-1)%wide*leng+i] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                    elif (j+i)%2 ==1:
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i-1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                elif i>left-1 and i<right and j>=down and j<=up :#曲げ（縮側)
+
+                    if i == left :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side+bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (i+j)%2 == 1 :
+
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side+bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                    elif i == right-1 :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side+bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (j+i)%2 == 1 :
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side+bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+
+                    elif (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side+bend
+                        graphen_list[j*leng+(i-1)] = side+bend
+
+                        graphen_matrix[j*leng+i] = graphen_list 
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side+bend
+                        graphen_list[j*leng+(i-1)] = side+bend
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                elif j == 0 and i>left-1 and i<right : #j=0 曲げの伸び
+                    if i == left :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (i+j)%2 == 1 :
+
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                    elif i == right-1 :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (j+i)%2 == 1 :
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+
+                    elif (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list 
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                elif j == wide-1 and i>left-1 and i<right : #j=wide-1で伸び
+                    if i == left :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (i+j)%2 == 1 :
+
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                    elif i == right-1 :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (j+i)%2 == 1 :
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+
+                    elif (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list 
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                else :#普通の形状
+                    if (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side
+                        graphen_list[j*leng+(i-1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side
+                        graphen_list[j*leng+(i-1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+    else :
+        
+        left = 2
+        right = 9
+        up = int(3)
+        down = int(2)
+
+        print("left",left)
+        print("right",right)
+        print("up",up)
+        print("down",down)
+
+    
+
+        for j in range(wide):
+
+            for i in range(leng):
+                
+                graphen_list = graphen_list_for_tube(wide,leng)
+
+                if i == 0: #0行目
+                    if (j+i)%2 == 0:
+                        graphen_list[j*leng+(i+1)] = side
+                        graphen_list[(j-1)%wide*leng+i] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+
+                    elif (j+i)%2 == 1:
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue                
+                elif i == leng-1:#右端
+                    if (j+i)%2 == 0:
+                        graphen_list[j*leng+(i-1)] = side
+                        graphen_list[(j-1)%wide*leng+i] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                    elif (j+i)%2 ==1:
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i-1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                elif i>left-1 and i<right and j>=down and j<=up :#曲げ（縮側)
+
+                    if i == left :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side+bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (i+j)%2 == 1 :
+
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side+bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                    elif i == right-1 :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side+bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (j+i)%2 == 1 :
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side+bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+
+                    elif (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side+bend
+                        graphen_list[j*leng+(i-1)] = side+bend
+
+                        graphen_matrix[j*leng+i] = graphen_list 
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side+bend
+                        graphen_list[j*leng+(i-1)] = side+bend
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                elif j == 0 and i>left-1 and i<right : #j=0 曲げの伸び
+                    if i == left :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (i+j)%2 == 1 :
+
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                    elif i == right-1 :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (j+i)%2 == 1 :
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+
+                    elif (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list 
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                elif j == wide-1 and i>left-1 and i<right : #j=wide-1で伸び
+                    if i == left :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (i+j)%2 == 1 :
+
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side-bend
+                            graphen_list[j*leng+(i-1)] = side
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                    elif i == right-1 :
+                        if (j+i)%2 == 0 :
+                            graphen_list[(j-1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+                        elif (j+i)%2 == 1 :
+                            graphen_list[(j+1)%wide*leng+i] = side
+                            graphen_list[j*leng+(i+1)] = side
+                            graphen_list[j*leng+(i-1)] = side-bend
+
+                            graphen_matrix[j*leng+i] = graphen_list
+                            continue
+
+                    elif (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list 
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side-bend
+                        graphen_list[j*leng+(i-1)] = side-bend
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                else :#普通の形状
+                    if (j+i)%2 == 0 :
+                        graphen_list[(j-1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side
+                        graphen_list[j*leng+(i-1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+                    elif (j+i)%2 == 1 :
+                        graphen_list[(j+1)%wide*leng+i] = side
+                        graphen_list[j*leng+(i+1)] = side
+                        graphen_list[j*leng+(i-1)] = side
+
+                        graphen_matrix[j*leng+i] = graphen_list
+                        continue
+
+
+    return graphen_matrix
+
+def graphen_Hamilton_matrix_tube_cairal_bend(side,wide,leng,bend):
+
+    graphen_matrix = graphen_matrix_for_tube(wide,leng)
+    graphen_list = graphen_list_for_tube(wide,leng)
+
+    up = 40
+    down = 20
+
+    for i in range(wide):
+        
+        graphen_list = graphen_list_for_tube(wide,leng)
+
+        if i == 0 :
+            graphen_list[i+1] = side
+            graphen_list[wide] = side 
+
+            graphen_matrix[i] = graphen_list
+
+            continue
+        elif i == wide -1 :
+            if i%2 ==0:
+                graphen_list[i+1] = side
+                graphen_list[i-1] = side
+                graphen_list[wide+i] = side 
+
+                graphen_matrix[i] = graphen_list
+
+                continue
+            elif i%2 ==1:
+                graphen_list[i+1] = side
+                graphen_list[i-1] = side
+
+                graphen_matrix[i] = graphen_list
+                
+                continue
+        else :
+            graphen_list[i+1] = side 
+            graphen_list[i-1] = side
+            if i%2 ==0 :
+                graphen_list[wide+i] = side
+
+            graphen_matrix[i] = graphen_list
+
+            continue
+
+    for j in range(1,leng):
+        for i in range(wide):
+            
+            graphen_list = np.zeros(leng**2,dtype=float)
+
+            if j == leng-1 :
+                if i == wide-1 :#右端
+                    if (j*wide+i)%2 == 0:
+                        graphen_list[j*wide+i-1] = side
+
+                        graphen_matrix[j*wide+i] = graphen_list
+
+                        continue
+                    elif (j*wide+i)%2 == 1:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[(j-1)*wide+i] = side 
+
+                        graphen_matrix[j*wide+i] =graphen_list
+                        
+                        continue
+                elif i == 0 :
+
+                    if (j*wide+i)%2 == 0:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[j*wide+i+1] = side
+
+                        graphen_matrix[j*wide+i] = graphen_list
+
+                        continue
+                    elif (j*wide+i)%2 == 1:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[j*wide+i+1] = side
+                        graphen_list[(j-1)*wide+i] = side 
+
+                        graphen_matrix[j*wide+i] =graphen_list
+                        
+                        continue
+
+                elif (i+j*wide)%2 == 0:
+                    graphen_list[j*wide+i-1] = side
+                    graphen_list[j*wide+i+1] = side
+                    
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+                elif (i+j*wide)%2 == 1:
+                    graphen_list[j*wide+i-1] = side
+                    graphen_list[j*wide+i+1] = side
+                    graphen_list[(j-1)*wide+i] = side
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+            elif j>= down and j <= up :
+                if i == wide-1 :#右端
+                    if j == up :
+                        if (j*wide+i)%2 == 0:
+                            graphen_list[j*wide+i-1] = side
+                            graphen_list[j*wide+i+1] = side
+
+                            graphen_list[(j+1)*wide+i] = side
+
+                            graphen_matrix[j*wide+i] = graphen_list
+
+                            continue
+                        elif (j*wide+i)%2 == 1:
+                            graphen_list[j*wide+i-1] = side
+                            graphen_list[j*wide+i+1] = side
+
+                            graphen_list[(j-1)*wide+i] = side - bend
+
+                            graphen_matrix[j*wide+i] =graphen_list
+                            
+                            continue
+                    elif (j*wide+i)%2 == 0:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[j*wide+i+1] = side
+
+                        graphen_list[(j+1)*wide+i] = side - bend
+
+                        graphen_matrix[j*wide+i] = graphen_list
+
+                        continue
+                    elif (j*wide+i)%2 == 1:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[j*wide+i+1] = side
+
+                        graphen_list[(j-1)*wide+i] = side - bend
+
+                        graphen_matrix[j*wide+i] =graphen_list
+                        
+                        continue
+                elif i == 0 :
+                    
+                    if j ==  up :
+
+                        if (j*wide+i)%2 == 0:
+                            graphen_list[j*wide+i-1] = side
+                            graphen_list[j*wide+i+1] = side
+
+                            graphen_list[(j+1)*wide+i] = side 
+
+                            graphen_matrix[j*wide+i] = graphen_list
+
+                            continue
+                        elif (j*wide+i)%2 == 1:
+                            graphen_list[j*wide+i-1] = side
+                            graphen_list[j*wide+i+1] = side
+                            graphen_list[(j-1)*wide+i] = side + bend
+
+                            graphen_matrix[j*wide+i] =graphen_list
+                            
+                            continue
+
+                    elif (j*wide+i)%2 == 0:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[j*wide+i+1] = side
+
+                        graphen_list[(j+1)*wide+i] = side + bend
+
+                        graphen_matrix[j*wide+i] = graphen_list
+
+                        continue
+                    elif (j*wide+i)%2 == 1:
+                        graphen_list[j*wide+i-1] = side
+                        graphen_list[j*wide+i+1] = side
+                        graphen_list[(j-1)*wide+i] = side + bend
+
+                        graphen_matrix[j*wide+i] =graphen_list
+                        
+                        continue
+
+                elif (i+j*wide)%2 == 0:
+                    
+                    graphen_list[j*wide+i-1] = side
+                    graphen_list[j*wide+i+1] = side
+                    graphen_list[(j+1)*wide+i] = side
+                    
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+                elif (i+j*wide)%2 == 1:
+                    graphen_list[j*wide+i-1] = side
+                    graphen_list[j*wide+i+1] = side
+                    graphen_list[(j-1)*wide+i] = side
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+
+            elif i == 0:
+
+                graphen_list[j*wide+i+1] = side
+                graphen_list[j*wide+i-1] = side
+
+                
+                if (i+j*wide)%2 == 0:
+
+                    graphen_list[(j+1)*wide+i] = side 
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+                elif (i+j*wide)%2 == 1:
+
+                    graphen_list[(j-1)*wide+i] = side 
+
+                    graphen_matrix[j*wide+i] =graphen_list
+                    
+                    continue
+
+                graphen_matrix[j*wide+i] = graphen_list
+
+                continue
+            else :
+
+                graphen_list[j*wide+i+1] = side
+                graphen_list[j*wide+i-1] = side
+
+                if i == wide-1 :
+                    if (i+j*wide)%2 == 0:
+                        graphen_list[i+(j+1)*wide] = side 
+
+                        graphen_matrix[j*wide+i] = graphen_list
+                        continue
+                    elif (i+j*wide)%2 == 1:
+                        graphen_list[i+(j-1)*wide] = side 
+
+                        graphen_matrix[i+j*wide] = graphen_list
+                        continue
+                elif (i+j*wide)%2 == 0:
+                    graphen_list[(j+1)*wide+i] = side
+
+                    graphen_matrix[j*wide+i] = graphen_list
+
+                    continue
+                if (i+j*wide)%2 == 1:
+                    graphen_list[(j-1)*wide+i] = side
+                    
+                    graphen_matrix[j*wide+i] = graphen_list
+                    
+                    continue
+    
+    return graphen_matrix
+
+def graphen_list_for_tube(a,b):
+    if a>b :
+        graphen_list = np.zeros(a**2,dtype=float)
+    else :
+        graphen_list = np.zeros(b**2,dtype=float)
+
+    return graphen_list
+
+def graphen_matrix_for_tube(a,b):
+    if a>b :
+        matrix = 5*np.identity(a**2)
+    else :
+        matrix = 5*np.identity(b**2)
+
+    return matrix
+
+def Hermitian_checker(array):
+
+    times = len(array)
+    
+    for i in range(times):
+        for j in range(times):
+            if array[i,j] == array[j,i]:
+                continue
+            else:
+                print("errer",i,j)
+
+def band_gap(list):
+    positive_num = 100
+    negative_num = -100
+    for i in range(len(list)):
+        if list[i] > 0 :
+            if positive_num > list[i] :
+                positive_num = list[i]
+                continue
+            else :
+                continue
+        elif list[i] < 0:
+            if negative_num < list[i] :
+                negative_num = list[i]
+                continue
+            else :
+                continue
+    
+    return positive_num-negative_num
+
+def dope(Hamilton,dope,hopp_d):
+    N = len(Hamilton)
+
+    for i in range(N):
+        if Hamilton[dope,i] != 0:
+            Hamilton[dope,i] = hopp_d
+            Hamilton[i,dope] = hopp_d
+            continue
+    
+    return Hamilton
+
+list1=np.zeros((n,n),dtype=np.complex)
+for i in range(n):
+    for j in range(n):
+        #list1[i,j]=(1/(2*np.pi*haba**2)**0.25)*np.exp(-((i*dx-n/3*dx)**2+(j*dy-n/3*dy)**2)/(4*haba**2)+1j*100*np.pi*i*dx/h_bar)
+        #list1[i,j]=np.exp(-((x_list[i]-x_list[n+1]/4)**2+(y_list[j]-y_list[n+1]/4)**2)/(4*(0.035)**2)+(1j*50*np.pi*(x_list[i]+y_list[j])/h_bar))/(2*np.pi*(0.035)**2)**(1/4)
+        list1[i][j]=np.exp(-1*(i-25)**2/100-1*(j-25)**2/100+(0.5j)*np.pi*i)#graphen
+
+list2=np.zeros((n,n),dtype=np.complex)
+for i in range(int(n/2-n/10),int(n/2+n/10)):
+    for j in range(1,n):
+        #list2[i]=(-70.7*(np.pi)**2)
+        list2=0
+
+
+
+########main###########
+
+#list_g=graphen_Hamilton_matrix()
+
+# paralist1,paralist2 = parallel_graphen()
+
+# gutyagutya=list_g*paralist1*paralist2+5*paralist1*paralist2+100*list_g*paralist2+500*paralist2
+
+
+
+##### use scipy ##### slow
+#list_g=csr_matrix(list_g)
+#eig_val = np.zeros(n**2-2)
+#eig_val,eig_vec = eigs(list_g,(n**2)-2)
+
+# eig_val,eig_vec = np.linalg.eig(gutyagutya)
+
+# u_list=list_g*eig_vec
+
+# print(u_list)
+
+# fig = plt.figure()
+# ax = Axes3D(fig)
+# x_list,y_list = np.mgrid[0:n**2,0:n**2]
+
+# graph = ax.plot_surface(x_list,y_list,u_list,cmap="BuGn")
+# plt.show()
+
+#### plt eig_val #####
+"""
+eig_val,eig_vec = np.linalg.eig(list_g)
+m=70
+plt.hist(eig_val,bins=m)
+plt.savefig("pic/graphen_enelgy"+str(n)+","+str(m)+".png")
+plt.show()
+"""
+###graphen3D animation###
+"""
+
+graph_list=[]
+
+for t in range(times):#main
+
+    #list1=rungekutta(Hamilton,list1,list2)
+
+    list1=rungekutta(graphen_Hamilton,list1,list2)
+
+    ab_list1=np.absolute(list1)**2
+    
+    ab_list1=ab_list1/norm(ab_list1)
+    
+    fig = plt.figure()
+    ax = Axes3D(fig)
+    x_list,y_list = np.mgrid[0:n,0:n]
+    
+    #ax.set_zlim3d(0,1)
+    
+    graph = ax.plot_surface(x_list,y_list,ab_list1,cmap="BuGn")
+    #graph = ax.plot_surface(x_list,y_list,list2,cmap="BuGn_r")
+    
+    #save data and pic
+
+    plt.savefig("pic/20200226/"+ str(t).zfill(3) +"ban.png")
+    np.savetxt("data/20200226/psi_list/"+ str(t).zfill(3) +"ban.csv",list1,delimiter=",")
+
+    graph_list.append(graph)
+    
+    #if t == times-1 :
+    #    np.savetxt("pic/20200120/ArtistAnimation.csv",graph_list,delimiter=",")
+    
+    print(t)
+    #plt.pause(0.5)
+    #plt.close()
+"""
+
+#make animation
+#anim = anime.ArtistAnimation(fig, graph_list,interval=100)
+#anim.save("Hadou20190718-2.html",writer="ffmpeg")
